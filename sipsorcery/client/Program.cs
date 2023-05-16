@@ -188,7 +188,7 @@ namespace webrtc_echo
             Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", filepath);
             FirestoreDb db = FirestoreDb.Create(projectId);
 
-            var RoomRef = db.Collection("rooms-test");
+            var docRef = db.Collection("rooms-test").Document("1");
             Dictionary<string, string> Offer_dic = new Dictionary<string, string>
             {
                 { "type","offer" },{ "sdp",offer.sdp},
@@ -201,7 +201,7 @@ namespace webrtc_echo
 
             logger.LogDebug($"{offer.toJSON()}");
 
-            var docRef = await RoomRef.AddAsync(data);
+            var writeResult = await docRef.SetAsync(data);
             logger.LogInformation($"Offer Send and Room Created: {docRef.Id}");
 
             logger.LogDebug($"Sending ICE Candidate Handler being Registered.");
