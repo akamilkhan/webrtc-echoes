@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "webrtc-echo": {
+      "commandName": "Executable",
+      "executablePath": "C:\\repos\\webrtc-echoes\\sipsorcery\\server\\bin\\Debug\\net5.0\\webrtc-echo.exe"
+    }
+  }
+}

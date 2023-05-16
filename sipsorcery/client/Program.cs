@@ -31,6 +31,11 @@ using Serilog.Extensions.Logging;
 using SIPSorcery.Net;
 using SIPSorcery.Sys;
 using SIPSorceryMedia.Abstractions;
+using System.Diagnostics;
+using Google.Cloud.Firestore;
+using System.Collections.Generic;
+using System.Text.Json;
+
 
 namespace webrtc_echo
 {
@@ -43,7 +48,7 @@ namespace webrtc_echo
     public class Options
     {
         public const string DEFAULT_ECHO_SERVER_URL = "http://localhost:8080/offer";
-        public const LogEventLevel DEFAULT_VERBOSITY = LogEventLevel.Debug;
+        public const LogEventLevel DEFAULT_VERBOSITY = LogEventLevel.Information;
         public const int TEST_TIMEOUT_SECONDS = 10;
 
         [Option('s', "server", Required = false, Default = DEFAULT_ECHO_SERVER_URL,
@@ -72,9 +77,12 @@ namespace webrtc_echo
 
         static async Task<int> Main(string[] args)
         {
+            int count = 0;
+            Stopwatch sw = new Stopwatch();
+
             Console.WriteLine("Starting webrtc echo test client.");
 
-            WebRTCTestTypes testType = WebRTCTestTypes.PeerConnection;
+            WebRTCTestTypes testType = WebRTCTestTypes.DataChannelEcho;
             string echoServerUrl = Options.DEFAULT_ECHO_SERVER_URL;
             LogEventLevel verbosity = Options.DEFAULT_VERBOSITY;
             int pcTimeout = Options.TEST_TIMEOUT_SECONDS;
@@ -110,27 +118,44 @@ namespace webrtc_echo
 
             if (dc != null)
             {
-                var pseudo = Crypto.GetRandomString(5);
+                int msg_size = 100;
+                var pseudo = Crypto.GetRandomString(msg_size);
 
                 dc.onopen += () =>
                 {
                     logger.LogInformation($"Data channel {dc.label}, stream ID {dc.id} opened.");
+                    logger.LogInformation($"Test Started.");
+
+                    sw.Start();
                     dc.send(pseudo);
+                    logger.LogDebug($"Data Send: {pseudo}");
                 };
 
                 dc.onmessage += (dc, proto, data) =>
                 {
                     string echoMsg = Encoding.UTF8.GetString(data);
-                    logger.LogDebug($"data channel onmessage {proto}: {echoMsg}.");
+                    //sw.Stop();
+
+                    logger.LogDebug($"data channel onmessage {proto}: {echoMsg} : {sw.ElapsedMilliseconds} ms.");
 
                     if (echoMsg == pseudo)
                     {
-                        logger.LogInformation($"Data channel echo test success.");
+                        //logger.LogInformation($"Data channel echo test success.");
 
                         if (testType == WebRTCTestTypes.DataChannelEcho)
                         {
-                            success = true;
-                            testComplete.Set();
+                            count++;
+                            pseudo = Crypto.GetRandomString(msg_size);
+                            //pseudo = pseudo; // + count.ToString();
+                            dc.send(pseudo);
+                            logger.LogDebug($"Data Send: {pseudo}");
+                            if (count == 1000)
+                            {
+                                sw.Stop();
+                                logger.LogInformation($"Test Complete | Number so string send: {count} | Average RTT: {sw.ElapsedMilliseconds / (float)count}");
+                                success = true;
+                                testComplete.Set();
+                            }
                         }
                     }
                     else
@@ -156,32 +181,134 @@ namespace webrtc_echo
                 }
             };
 
-            logger.LogInformation($"Posting offer to {echoServerUrl}.");
+            logger.LogInformation($"Posting offer to Signaling Server.");
+            //////////////////CREATE OFFER//////////////////////////////////////
+            string projectId = "webrtc-signaling-57733";
+            string filepath = "C:/repos/webrtc-signaling-57733-85acfd65782c.json";
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", filepath);
+            FirestoreDb db = FirestoreDb.Create(projectId);
 
-            var httpClient = new HttpClient();
-            var content = new StringContent(offer.toJSON(), Encoding.UTF8, "application/json");
-            var response = await httpClient.PostAsync(echoServerUrl, content);
-            var answerStr = await response.Content.ReadAsStringAsync();
-
-            if (RTCSessionDescriptionInit.TryParse(answerStr, out var answerInit))
+            var RoomRef = db.Collection("rooms-test");
+            Dictionary<string, string> Offer_dic = new Dictionary<string, string>
             {
-                logger.LogDebug($"SDP answer: {answerInit.sdp}");
+                { "type","offer" },{ "sdp",offer.sdp},
+            };
 
-                var setAnswerResult = pc.setRemoteDescription(answerInit);
-                if (setAnswerResult != SetDescriptionResultEnum.OK)
+            Dictionary<string, Dictionary<string, string>> data = new Dictionary<string, Dictionary<string, string>>
+            {
+                { "offer",Offer_dic },
+            };
+
+            logger.LogDebug($"{offer.toJSON()}");
+
+            var docRef = await RoomRef.AddAsync(data);
+            logger.LogInformation($"Offer Send and Room Created: {docRef.Id}");
+
+            logger.LogDebug($"Sending ICE Candidate Handler being Registered.");
+            /////////////////////////////////////////////////////////////////////
+            //////////////////Send ICE Candidate//////////////////////////////////////
+
+            var callerCandidateDocRef = docRef.Collection("callerCandidates");
+
+            pc.onicecandidate += (candidate) =>
+            {
+                logger.LogInformation($"ICE Candidate Created: {candidate.toJSON()}");
+                //callerCandidateDocRef.SetAsync(JsonConvert.SerializeObject(candidate.toJSON()));
+                //JsonSerializer.Serialize(candidate.toJSON());
+                Dictionary<string, object> ice_candidate = new Dictionary<string, object>
+            {
+                { "candidate", candidate.candidate},
+                { "sdpMLineIndex", candidate.sdpMLineIndex },
+                { "sdpMid", candidate.sdpMid },
+                    {"usernameFragment",candidate.usernameFragment }
+            };
+                callerCandidateDocRef.AddAsync(ice_candidate).Wait();
+            };
+            /////////////////////////////////////////////////////////////////////
+            logger.LogDebug($"Handler for Listen for ANSWER is being Registered.");
+            //////////////////Listen for answer//////////////////////////////////////
+            FirestoreChangeListener listener = docRef.Listen(snapshot =>
+            {
+                Console.WriteLine("Callback received document snapshot.");
+                Console.WriteLine("Document exists? {0}", snapshot.Exists);
+                if (snapshot.Exists)
                 {
-                    logger.LogWarning($"Set remote description failed {setAnswerResult}.");
+                    Dictionary<string, object> snapshotDic = snapshot.ToDictionary();
+                    var snapshotDicJson = JsonSerializer.Serialize(snapshotDic);
+                    Console.WriteLine("Document data for {0} document:{1}", snapshot.Id, snapshotDicJson);
+
+                    //foreach (KeyValuePair<string, object> pair in snapshotDic)
+                    //{
+                    //    Console.WriteLine("{0}: {1}", pair.Key, pair.Value);
+                    //}
+                    if(snapshot.ContainsField("answer"))
+                    {
+                        var answer = snapshotDic["answer"];
+                        var answerJson = JsonSerializer.Serialize(answer);
+                        if (RTCSessionDescriptionInit.TryParse(answerJson.ToString(), out var answerInit))
+                        {
+                            logger.LogDebug($"SDP answer: {answerInit.sdp}");
+
+                            var setAnswerResult = pc.setRemoteDescription(answerInit);
+                            if (setAnswerResult != SetDescriptionResultEnum.OK)
+                            {
+                                logger.LogWarning($"Set remote description failed {setAnswerResult}.");
+                            }
+                        }
+                        else
+                        {
+                            logger.LogWarning($"Failed to parse SDP answer from echo server: {snapshot}.");
+                        }
+                    }
+
                 }
-            }
-            else
+
+            });
+            /////////////////////////////////////////////////////////////////////
+            logger.LogDebug($"Handler for Listen for Remote ICE Candidates is being Registered.");
+            //////////////////Listen for remote ICE candidates below//////////////////////////////////////
+            FirestoreChangeListener listener_remote_ice = docRef.Collection("calleeCandidates").Listen(snapshot =>
             {
-                logger.LogWarning($"Failed to parse SDP answer from echo server: {answerStr}.");
-            }
+                foreach (DocumentChange change in snapshot.Changes)
+                {
+                    if (change.ChangeType.ToString() == "Added")
+                    {
+                        logger.LogDebug("New: {0}", change.Document.Id);
+
+                        Dictionary<string, object> snapshotDic = change.Document.ToDictionary();
+                        var CandidateJson = JsonSerializer.Serialize(snapshotDic);
+                        logger.LogInformation($"ICE Candidate Created: {CandidateJson}");
+
+                        RTCIceCandidateInit CandidateInit;
+                        if (RTCIceCandidateInit.TryParse(CandidateJson, out CandidateInit) == true)
+                        {
+                            logger.LogDebug($"offer parsing to RTCIceCandidateInit successful");
+                            pc.addIceCandidate(CandidateInit);
+
+
+                        }
+                        else
+                        {
+                            logger.LogWarning($"offer parsing to RTCIceCandidateInit failed");
+
+                        }
+                    }
+                    else if (change.ChangeType.ToString() == "Modified")
+                    {
+                        logger.LogWarning("Modified: {0}", change.Document.Id);
+                    }
+                    else if (change.ChangeType.ToString() == "Removed")
+                    {
+                         logger.LogWarning("Removed: {0}", change.Document.Id);
+                    }
+
+                }
+            });
 
             pc.OnClosed += testComplete.Set;
 
             logger.LogDebug($"Test timeout is {pcTimeout} seconds.");
-            testComplete.Wait(pcTimeout * 1000);
+            testComplete.Wait(pcTimeout * 100000);
 
             if (!pc.IsClosed)
             {
@@ -190,14 +317,19 @@ namespace webrtc_echo
             }
 
             logger.LogInformation($"{testType} test success {success }.");
-
+            while (true) { Task.Delay(1000); }
             return (success) ? SUCCESS_RESULT : FAILURE_RESULT;
         }
 
         private static async Task<RTCPeerConnection> CreatePeerConnection()
         {
+            const string STUN_URL = "stun:stun1.l.google.com:19302";
+
+       
+
             RTCConfiguration config = new RTCConfiguration
             {
+                iceServers = new List<RTCIceServer> { new RTCIceServer { urls = STUN_URL } },
                 X_DisableExtendedMasterSecretKey = true
             };
 
