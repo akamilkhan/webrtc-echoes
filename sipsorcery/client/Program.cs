@@ -209,7 +209,7 @@ namespace webrtc_echo
             //////////////////Send ICE Candidate//////////////////////////////////////
 
             var callerCandidateDocRef = docRef.Collection("callerCandidates");
-
+            
             pc.onicecandidate += (candidate) =>
             {
                 logger.LogInformation($"ICE Candidate Created: {candidate.toJSON()}");

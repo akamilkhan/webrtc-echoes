@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "hman-x2": {
+      "commandName": "Project",
+      "workingDirectory": "C:\\repos\\webrtc-echoes\\hman-x2"
+    }
+  }
+}
