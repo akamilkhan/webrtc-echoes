@@ -39,6 +39,8 @@ namespace ARTICARES
 
         public async void JoinRoom(string roomId)
         {
+            Communication.SendSetTargetParams(1, 1, 1, 1);
+
 
             string projectId = "webrtc-signaling-57733";
             string filepath = "C:/repos/webrtc-signaling-57733-85acfd65782c.json";
@@ -181,7 +183,7 @@ namespace ARTICARES
             }
         }
 
-
+        /*
         private async Task Offer(IHttpContext context, int pcTimeout)
         {
             var offer = await context.GetRequestDataAsync<RTCSessionDescriptionInit>();
@@ -217,7 +219,7 @@ namespace ARTICARES
                 }
             }
         }
-
+        */
     }
 
     public class WebRTCEchoServer
@@ -240,6 +242,10 @@ namespace ARTICARES
             logger.LogTrace(offer.sdp);
             const string STUN_URL = "stun:stun1.l.google.com:19302";
 
+
+            var messageProtocol = new MessagingProtocol();
+            MessagingProtocol.Header header;
+            MessagingProtocol.SetTargetParams tparams;
 
 
             RTCConfiguration config = new RTCConfiguration
@@ -294,11 +300,73 @@ namespace ARTICARES
             pc.ondatachannel += (dc) =>
             {
                 logger.LogInformation($"Data channel opened for label {dc.label}, stream ID {dc.id}.");
+                logger.LogInformation($"Data channel {dc.label}, stream ID {dc.id} opened.");
+                var pseudo = MessagingProtocol.EncodeSetTargetParams(1, 1, 1, 1);
+
+                dc.send(pseudo);
+
+                dc.onopen += () =>
+                {
+                    logger.LogInformation($"Data channel {dc.label}, stream ID {dc.id} opened.");
+                    var pseudo = MessagingProtocol.EncodeSetTargetParams(1, 1, 1, 1);
+
+                    dc.send(pseudo);
+                };
                 dc.onmessage += (rdc, proto, data) =>
                 {
                     //logger.LogInformation($"Data channel got message: {Encoding.UTF8.GetString(data)}");
-                    rdc.send(Encoding.UTF8.GetString(data));
+                    //rdc.send(Encoding.UTF8.GetString(data));
+                    //rdc.send(data);
+
+
+                    header = MessagingProtocol.DecodeHeader(data);
+
+                    if (header.MessageID == MessagingProtocol.MessageID.CommandMessage)
+                    {
+                        logger.LogWarning($"CommandMessage Recieved.");
+                        if (header.CommandCode == MessagingProtocol.CommandCode.SetTargetParams)
+                        {
+                            logger.LogWarning($"CommandMessage - SetTargetParams Recieved.");
+
+                            (header, tparams) = MessagingProtocol.DecodeSetTargetParams(data);
+
+                            logger.LogDebug(header.ToString());
+                            logger.LogDebug(tparams.ToString());
+
+                        }
+
+                    }
+                    else if (header.MessageID == MessagingProtocol.MessageID.ResponseMessage)
+                    {
+                        logger.LogDebug($"ResponseMessage Recieved.");
+                        if (header.CommandCode == MessagingProtocol.CommandCode.SetTargetParams)
+                        {
+                            logger.LogDebug($"ResponseMessage - SetTargetParams Recieved.");
+                            
+                            MessagingProtocol.SetTargetParamsResponse response = MessagingProtocol.SetTargetParamsResponse.FromByteArray(data);
+                            logger.LogDebug(response.ToString());
+
+                            logger.LogInformation($"Seq: {response.MessageHeader.PacketSequenceNumber} RTT: {(messageProtocol.Timer.TimestampInMicroSeconds() - response.MessageHeader.CommandTimestamp)/1000.0}ms");
+                            
+                            //Calculate Stats,
+                            // Set target
+
+                            //Command
+                            var pseudo = MessagingProtocol.EncodeSetTargetParams(1, 2, 3, 4);
+
+                            dc.send(pseudo);
+
+
+                        }
+                    }
+                    else
+                    {
+                        logger.LogWarning($"ErrorMessage Recieved.");
+                    }
+
                 };
+
+
             };
 
             var setResult = pc.setRemoteDescription(offer);
@@ -317,6 +385,11 @@ namespace ARTICARES
                 logger.LogWarning($"Failed to set remote description {setResult}.");
                 return null;
             }
+        }
+
+        private void Dc_onopen()
+        {
+            throw new NotImplementedException();
         }
     }
 }

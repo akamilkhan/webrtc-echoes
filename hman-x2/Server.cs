@@ -57,6 +57,11 @@ namespace ARTICARES
             var offer = pc.createOffer();
             await pc.setLocalDescription(offer);
 
+            var messageProtocol = new MessagingProtocol();
+            MessagingProtocol.Header header;
+            MessagingProtocol.SetTargetParams tparams;
+            MicroSecondDateTime dataTime = new MicroSecondDateTime();
+
             bool success = false;
             ManualResetEventSlim testComplete = new ManualResetEventSlim();
 
@@ -65,49 +70,116 @@ namespace ARTICARES
             if (dc != null)
             {
                 int msg_size = 100;
-                var pseudo = Crypto.GetRandomString(msg_size);
+                var pseudo = MessagingProtocol.EncodeSetTargetParams(1, 1, 1, 1);
 
                 dc.onopen += () =>
                 {
                     logger.LogInformation($"Data channel {dc.label}, stream ID {dc.id} opened.");
-                    logger.LogInformation($"Test Started.");
+                    //logger.LogInformation($"Test Started.");
 
-                    sw.Start();
-                    dc.send(pseudo);
-                    logger.LogDebug($"Data Send: {pseudo}");
+                    //sw.Start();
+                    //dc.send(pseudo);
+                    //logger.LogDebug($"Data Send: {pseudo}");
                 };
 
                 dc.onmessage += (dc, proto, data) =>
                 {
-                    string echoMsg = Encoding.UTF8.GetString(data);
-                    //sw.Stop();
 
-                    logger.LogDebug($"data channel onmessage {proto}: {echoMsg} : {sw.ElapsedMilliseconds} ms.");
+                    header = MessagingProtocol.DecodeHeader(data);
 
-                    if (echoMsg == pseudo)
+                    if(header.MessageID == MessagingProtocol.MessageID.CommandMessage)
                     {
-                        //logger.LogInformation($"Data channel echo test success.");
-
-                        if (testType == WebRTCTestTypes.DataChannelEcho)
+                        logger.LogDebug($"CommandMessage Recieved.");
+                        if(header.CommandCode == MessagingProtocol.CommandCode.SetTargetParams)
                         {
-                            count++;
-                            pseudo = Crypto.GetRandomString(msg_size);
-                            //pseudo = pseudo; // + count.ToString();
-                            dc.send(pseudo);
-                            logger.LogDebug($"Data Send: {pseudo}");
-                            if (count == 1000)
+                            logger.LogDebug($"CommandMessage - SetTargetParams Recieved.");
+
+                            (header, tparams) = MessagingProtocol.DecodeSetTargetParams(data);
+
+                            logger.LogDebug(header.ToString());
+                            logger.LogDebug(tparams.ToString());
+
+                            // use target param to set the target of hman
+
+                            // get current position
+                            short xPos = 1;
+                            short yPos = 2;
+
+                            MessagingProtocol.SetTargetParamsResponse response = new MessagingProtocol.SetTargetParamsResponse
                             {
-                                sw.Stop();
-                                logger.LogInformation($"Test Complete | Number so string send: {count} | Average RTT: {sw.ElapsedMilliseconds / (float)count}");
-                                success = true;
-                                testComplete.Set();
-                            }
+                                X = xPos,
+                                Y = yPos,
+                                Vx = 3,
+                                Vy = 4,
+                                EB = 5,
+                                MS = 6,
+                                AdditionalInfo = new byte[40],
+                                MessageHeader = new MessagingProtocol.Header
+                                {
+                                    MessageID = MessagingProtocol.MessageID.ResponseMessage,
+                                    CommandCode = MessagingProtocol.CommandCode.SetTargetParams,
+                                    PacketSequenceNumber = header.PacketSequenceNumber,
+                                    CommandTimestamp = header.CommandTimestamp,
+                                    ResponseTimestamp = dataTime.TimestampInMicroSeconds(),
+                                    PayloadLength = (ushort)MessagingProtocol.MessageSize.SetTargetParamsResponse
+                                }
+                  
+                            };
+
+                            
+                            dc.send(response.ToByteArray());
+
+
                         }
+
+                    }
+                    else if (header.MessageID == MessagingProtocol.MessageID.ResponseMessage)
+                    {
+                        logger.LogWarning($"ResponseMessage Recieved.");
                     }
                     else
                     {
-                        logger.LogWarning($"Data channel echo test failed, echoed message of {echoMsg} did not match original of {pseudo}.");
+                        logger.LogWarning($"ErrorMessage Recieved.");
                     }
+                    //string echoMsg = Encoding.UTF8.GetString(data);
+                    ////sw.Stop();
+
+                    //logger.LogDebug($"data channel onmessage {proto}: {echoMsg} : {sw.ElapsedMilliseconds} ms.");
+
+                    //if (data.SequenceEqual<byte>(pseudo))
+                    //{
+
+                    //    //logger.LogInformation($"Data channel echo test success.");
+
+                    //    if (testType == WebRTCTestTypes.DataChannelEcho)
+                    //    {
+                    //        count++;
+                    //        pseudo = MessagingProtocol.EncodeSetTargetParams(1, 1, 1, 1);
+                    //        //pseudo = pseudo; // + count.ToString();
+                    //        dc.send(pseudo);
+                    //        logger.LogDebug($"Data Send: {pseudo}");
+                    //        if (count == 1000)
+                    //        {
+                    //            sw.Stop();
+                    //            logger.LogInformation($"Test Complete | Number so string send: {count} | Average RTT: {sw.ElapsedMilliseconds / (float)count}");
+                    //            success = true;
+                    //            testComplete.Set();
+                    //        }
+                    //    }
+                    //}
+                    //else
+                    //{
+                    //    logger.LogWarning($"Data channel echo test failed, echoed message of {echoMsg} did not match original of {pseudo}.");
+                    //    MessagingProtocol.Header header;
+                    //    MessagingProtocol.SetTargetParams tparams;
+                    //    (header, tparams) = MessagingProtocol.DecodeSetTargetParams(pseudo);
+                    //    Console.WriteLine(header.ToString());
+                    //    Console.WriteLine(tparams.ToString());
+
+                    //    (header, tparams) = MessagingProtocol.DecodeSetTargetParams(data);
+                    //    Console.WriteLine(header.ToString());
+                    //    Console.WriteLine(tparams.ToString());
+                    //}
                 };
             }
 
