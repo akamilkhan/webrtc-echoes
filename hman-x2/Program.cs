@@ -76,7 +76,7 @@ namespace ARTICARES
                 logger.LogInformation($"Running application as patient.");
                 Server patient = new Server(logger);
 
-                patient.run_test();
+                patient.run();
 
             }
             else

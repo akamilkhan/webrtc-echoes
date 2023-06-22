@@ -30,39 +30,37 @@ namespace ARTICARES
             string byteString = BitConverter.ToString(message).Replace("-", "");
             Console.WriteLine(byteString);
 
-            MessagingProtocol.Header header;
             MessagingProtocol.SetTargetParams tparams;
-            (header, tparams) = MessagingProtocol.DecodeSetTargetParams(message);
-            Console.WriteLine(header.ToString());
+            tparams = MessagingProtocol.DecodeSetTargetParams(message);
             Console.WriteLine(tparams.ToString());
 
         }
-        public static void CreateSetTargetParamsResponse(MessagingProtocol.Header commandHeader,)
+        public static void CreateSetTargetParamsResponse(MessagingProtocol.Header commandHeader)
         {
-            // get current position
-            short xPos = 1;
-            short yPos = 2;
+            //// get current position
+            //short xPos = 1;
+            //short yPos = 2;
 
-            MessagingProtocol.SetTargetParamsResponse response = new MessagingProtocol.SetTargetParamsResponse
-            {
-                X = xPos,
-                Y = yPos,
-                Vx = 3,
-                Vy = 4,
-                EB = 5,
-                MS = 6,
-                AdditionalInfo = new byte[40],
-                MessageHeader = new MessagingProtocol.Header
-                {
-                    MessageID = MessagingProtocol.MessageID.ResponseMessage,
-                    CommandCode = MessagingProtocol.CommandCode.SetTargetParams,
-                    PacketSequenceNumber = commandHeader.PacketSequenceNumber,
-                    CommandTimestamp = commandHeader.CommandTimestamp,
-                    ResponseTimestamp = dataTime.TimestampInMicroSeconds(),
-                    PayloadLength = (ushort)MessagingProtocol.MessageSize.SetTargetParamsResponse
-                }
+            //MessagingProtocol.SetTargetParamsResponse response = new MessagingProtocol.SetTargetParamsResponse
+            //{
+            //    X = xPos,
+            //    Y = yPos,
+            //    Vx = 3,
+            //    Vy = 4,
+            //    EB = 5,
+            //    MS = 6,
+            //    AdditionalInfo = new byte[40],
+            //    MessageHeader = new MessagingProtocol.Header
+            //    {
+            //        MessageID = MessagingProtocol.MessageID.ResponseMessage,
+            //        CommandCode = MessagingProtocol.CommandCode.SetTargetParams,
+            //        PacketSequenceNumber = commandHeader.PacketSequenceNumber,
+            //        CommandTimestamp = commandHeader.CommandTimestamp,
+            //        ResponseTimestamp = dataTime.TimestampInMicroSeconds(),
+            //        PayloadLength = (ushort)MessagingProtocol.MessageSize.SetTargetParamsResponse
+            //    }
 
-            };
+            //};
 
         }
 

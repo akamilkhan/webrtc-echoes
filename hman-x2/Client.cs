@@ -32,6 +32,7 @@ namespace ARTICARES
 
         private readonly Microsoft.Extensions.Logging.ILogger logger = NullLogger.Instance;
         private static List<IPAddress> _icePresets = new List<IPAddress>();
+        private Signaling signaling;
         public Client(Microsoft.Extensions.Logging.ILogger logger)
         {
             this.logger = logger;
@@ -41,188 +42,25 @@ namespace ARTICARES
         {
             Communication.SendSetTargetParams(1, 1, 1, 1);
 
+            signaling = new Signaling(logger, roomId);
 
-            string projectId = "webrtc-signaling-57733";
-            string filepath = "C:/repos/webrtc-signaling-57733-85acfd65782c.json";
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", filepath);
-            FirestoreDb db = FirestoreDb.Create(projectId);
+            RTCSessionDescriptionInit offerSD = await signaling.LookForOffer(roomId);
 
-            var RoomRef = db.Collection("rooms-test").Document(roomId);
-
-
-            //////////////////Listen for offer//////////////////////////////////////
-            var roomSnapshot = await RoomRef.GetSnapshotAsync();
-            var offer = "";
-            if (roomSnapshot.Exists)
-            {
-                Dictionary<string, object> roomSnapshotDic = roomSnapshot.ToDictionary();
-                offer = JsonSerializer.Serialize(roomSnapshotDic["offer"]);
-                logger.LogInformation($"Room Snapshot: {offer}");
-
-                if (roomSnapshotDic.ContainsKey("offer"))
-                {
-                    logger.LogInformation($"Got offer!");
-                }
-                else
-                {
-                    logger.LogWarning($"No offer in the snapshot");
-                }
-
-            }
-            else
-            {
-                logger.LogWarning($"Snapshot doesn't exist");
-            }
-            //string offer_key = offer.ToDictionary<string,string>().Values;
-
-            //var offerSD_ = JsonSerializer.Deserialize<string>(offer);
-            RTCSessionDescriptionInit offerSD;
-            if (RTCSessionDescriptionInit.TryParse(offer, out offerSD) == true)
-            {
-                logger.LogInformation($"offer parsing to RTCSessionDescriptionInit successful");
-
-            }
-            else
-            {
-                logger.LogWarning($"offer parsing to RTCSessionDescriptionInit failed");
-
-            }
-
-
-            var echoServer = new WebRTCEchoServer(_icePresets);
+            var echoServer = new WebRTCClient(_icePresets);
             var pc = await echoServer.GotOffer(offerSD);
             if (pc != null)
             {
-                //////////////////answer//////////////////////////////////////
                 var answer = new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = pc.localDescription.sdp.ToString() };
-                Dictionary<string, object> answerDic =
+                signaling.PublishSession(answer);
+                signaling.SendICECandidates(ref pc, "calleeCandidates");
+                signaling.ListenForRemoteICECandidates(pc, "callerCandidates");
 
-                    new Dictionary<string, object>
-                    {
-                        {
-                            "answer", new Dictionary<string, object>
-                            {
-                                { "type", RTCSdpType.answer},
-                                { "sdp", pc.localDescription.sdp.ToString() }
-                            }
-                        }
-               };
-
-                await RoomRef.SetAsync(answerDic, SetOptions.MergeAll);
-
-                logger.LogInformation($"Answered: {answer.toJSON()}");
-
-                /////////////////////////////////////////////////////////////////////
-
-                //////////////////Send ICE Candidate//////////////////////////////////////
-
-                var calleeCandidateDocRef = RoomRef.Collection("calleeCandidates");
-
-                pc.onicecandidate += (candidate) =>
-                {
-                    logger.LogInformation($"ICE Candidate Created: {candidate.toJSON()}");
-                    //callerCandidateDocRef.SetAsync(JsonConvert.SerializeObject(candidate.toJSON()));
-                    //JsonSerializer.Serialize(candidate.toJSON());
-                    Dictionary<string, object> ice_candidate = new Dictionary<string, object>
-            {
-                { "candidate", candidate.candidate},
-                { "sdpMLineIndex", candidate.sdpMLineIndex },
-                { "sdpMid", candidate.sdpMid },
-                    {"usernameFragment",candidate.usernameFragment }
-            };
-                    calleeCandidateDocRef.AddAsync(ice_candidate).Wait();
-                };
-                /////////////////////////////////////////////////////////////////////
-                //////////////////Listen for remote ICE candidates below//////////////////////////////////////
-                FirestoreChangeListener listener_remote_ice = RoomRef.Collection("callerCandidates").Listen(snapshot =>
-                {
-                    foreach (DocumentChange change in snapshot.Changes)
-                    {
-                        if (change.ChangeType.ToString() == "Added")
-                        {
-                            logger.LogDebug("New: {0}", change.Document.Id);
-
-                            Dictionary<string, object> snapshotDic = change.Document.ToDictionary();
-                            var CandidateJson = JsonSerializer.Serialize(snapshotDic);
-                            logger.LogInformation($"ICE Candidate Created: {CandidateJson}");
-
-                            RTCIceCandidateInit CandidateInit;
-                            if (RTCIceCandidateInit.TryParse(CandidateJson, out CandidateInit) == true)
-                            {
-                                logger.LogDebug($"offer parsing to RTCIceCandidateInit successful");
-                                pc.addIceCandidate(CandidateInit);
-
-                            }
-                            else
-                            {
-                                logger.LogWarning($"offer parsing to RTCIceCandidateInit failed");
-
-                            }
-                        }
-                        else if (change.ChangeType.ToString() == "Modified")
-                        {
-                            logger.LogWarning("Modified: {0}", change.Document.Id);
-                        }
-                        else if (change.ChangeType.ToString() == "Removed")
-                        {
-                            logger.LogWarning("Removed: {0}", change.Document.Id);
-                        }
-                    }
-                });
-                //            roomRef.collection('calleeCandidates').onSnapshot(snapshot => {
-                //            snapshot.docChanges().forEach(async change => {
-                //            if (change.type === 'added')
-                //            {
-                //                let data = change.doc.data();
-                //                console.log(`Got new remote ICE candidate: ${ JSON.stringify(data)}`);
-                //            await peerConnection.addIceCandidate(new RTCIceCandidate(data));
-                //        }
-                //});
-                //});
-                /////////////////////////////////////////////////////////////////////
             }
         }
 
-        /*
-        private async Task Offer(IHttpContext context, int pcTimeout)
-        {
-            var offer = await context.GetRequestDataAsync<RTCSessionDescriptionInit>();
-
-            var jsonOptions = new JsonSerializerOptions();
-            jsonOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-
-            var echoServer = new WebRTCEchoServer(_icePresets);
-            var pc = await echoServer.GotOffer(offer);
-
-            if (pc != null)
-            {
-                var answer = new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = pc.localDescription.sdp.ToString() };
-                context.Response.ContentType = "application/json";
-                using (var responseStm = context.OpenResponseStream(false, false))
-                {
-                    await JsonSerializer.SerializeAsync(responseStm, answer, jsonOptions);
-                }
-
-                if (pcTimeout != 0)
-                {
-                    logger.LogDebug($"Setting peer connection close timeout to {pcTimeout} seconds.");
-
-                    var timeout = new Timer((state) =>
-                    {
-                        if (!pc.IsClosed)
-                        {
-                            logger.LogWarning("Test timed out.");
-                            pc.close();
-                        }
-                    }, null, pcTimeout * 1000, Timeout.Infinite);
-                    pc.OnClosed += timeout.Dispose;
-                }
-            }
-        }
-        */
     }
 
-    public class WebRTCEchoServer
+    public class WebRTCClient
     {
         private const int VP8_PAYLOAD_ID = 96;
 
@@ -230,9 +68,9 @@ namespace ARTICARES
 
         private List<IPAddress> _presetIceAddresses;
 
-        public WebRTCEchoServer(List<IPAddress> presetAddresses)
+        public WebRTCClient(List<IPAddress> presetAddresses)
         {
-            logger = SIPSorcery.LogFactory.CreateLogger<WebRTCEchoServer>();
+            logger = SIPSorcery.LogFactory.CreateLogger<WebRTCClient>();
             _presetIceAddresses = presetAddresses;
         }
 
@@ -240,13 +78,14 @@ namespace ARTICARES
         {
             logger.LogTrace($"SDP offer received.");
             logger.LogTrace(offer.sdp);
-            const string STUN_URL = "stun:stun1.l.google.com:19302";
 
 
             var messageProtocol = new MessagingProtocol();
             MessagingProtocol.Header header;
             MessagingProtocol.SetTargetParams tparams;
+            ulong last_time = 0;
 
+            const string STUN_URL = "stun:stun1.l.google.com:19302";
 
             RTCConfiguration config = new RTCConfiguration
             {
@@ -268,17 +107,17 @@ namespace ARTICARES
 
             SDP offerSDP = SDP.ParseSDPDescription(offer.sdp);
 
-            if (offerSDP.Media.Any(x => x.Media == SDPMediaTypesEnum.audio))
-            {
-                MediaStreamTrack audioTrack = new MediaStreamTrack(SDPWellKnownMediaFormatsEnum.PCMU);
-                pc.addTrack(audioTrack);
-            }
+            //if (offerSDP.Media.Any(x => x.Media == SDPMediaTypesEnum.audio))
+            //{
+            //    MediaStreamTrack audioTrack = new MediaStreamTrack(SDPWellKnownMediaFormatsEnum.PCMU);
+            //    pc.addTrack(audioTrack);
+            //}
 
-            if (offerSDP.Media.Any(x => x.Media == SDPMediaTypesEnum.video))
-            {
-                MediaStreamTrack videoTrack = new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.VP8, VP8_PAYLOAD_ID));
-                pc.addTrack(videoTrack);
-            }
+            //if (offerSDP.Media.Any(x => x.Media == SDPMediaTypesEnum.video))
+            //{
+            //    MediaStreamTrack videoTrack = new MediaStreamTrack(new VideoFormat(VideoCodecsEnum.VP8, VP8_PAYLOAD_ID));
+            //    pc.addTrack(videoTrack);
+            //}
 
             pc.OnRtpPacketReceived += (IPEndPoint rep, SDPMediaTypesEnum media, RTPPacket rtpPkt) =>
             {
@@ -328,9 +167,8 @@ namespace ARTICARES
                         {
                             logger.LogWarning($"CommandMessage - SetTargetParams Recieved.");
 
-                            (header, tparams) = MessagingProtocol.DecodeSetTargetParams(data);
+                            tparams = MessagingProtocol.DecodeSetTargetParams(data);
 
-                            logger.LogDebug(header.ToString());
                             logger.LogDebug(tparams.ToString());
 
                         }
@@ -346,8 +184,19 @@ namespace ARTICARES
                             MessagingProtocol.SetTargetParamsResponse response = MessagingProtocol.SetTargetParamsResponse.FromByteArray(data);
                             logger.LogDebug(response.ToString());
 
-                            logger.LogInformation($"Seq: {response.MessageHeader.PacketSequenceNumber} RTT: {(messageProtocol.Timer.TimestampInMicroSeconds() - response.MessageHeader.CommandTimestamp)/1000.0}ms");
-                            
+                            if (last_time == 0)
+                                last_time = response.MessageHeader.CommandTimestamp;
+                            if (response.MessageHeader.PacketSequenceNumber % 1000 == 0)
+                            {
+                                logger.LogInformation($"Seq: {response.MessageHeader.PacketSequenceNumber} RTT: {(messageProtocol.Timer.TimestampInMicroSeconds() - last_time) / 1000.0 /1000}ms");
+
+
+                                last_time = messageProtocol.Timer.TimestampInMicroSeconds();
+
+
+                            }
+                            logger.LogDebug($"Seq: {response.MessageHeader.PacketSequenceNumber} RTT: {(messageProtocol.Timer.TimestampInMicroSeconds() - response.MessageHeader.CommandTimestamp) / 1000.0}ms");
+
                             //Calculate Stats,
                             // Set target
 

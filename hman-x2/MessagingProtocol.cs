@@ -14,13 +14,12 @@ namespace ARTICARES
         // Store the current timestamp
         DateTimeOffset startTime;
         // Unix epoch
-        DateTimeOffset epoch; 
+        public static DateTimeOffset epoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
         public MicroSecondDateTime()
         {
             this.stopwatch = new Stopwatch();
             this.stopwatch.Start();
             this.startTime = DateTimeOffset.UtcNow;
-            this.epoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
         }
         
        public ulong TimestampInMicroSeconds()
@@ -40,7 +39,6 @@ namespace ARTICARES
         }
 
         private static ulong _latestPacketSequenceNumber = 0;
-        private static DateTimeOffset epoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
 
 
 
@@ -131,10 +129,63 @@ namespace ARTICARES
                        $"ResponseTimestamp: {ResponseTimestamp}, " +
                        $"PayloadLength: {PayloadLength}";
             }
+
+            public byte[] ToByteArray()
+            {
+                byte[] bytes = new byte[(int)MessageSize.Header]; // Size of all elements in bytes
+                int currentIndex = 0;
+
+                bytes[currentIndex] = (byte)MessageID;
+                currentIndex += sizeof(byte);
+
+                BitConverter.GetBytes((ushort)CommandCode).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(ushort);
+
+                BitConverter.GetBytes(PacketSequenceNumber).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                BitConverter.GetBytes(CommandTimestamp).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                BitConverter.GetBytes(ResponseTimestamp).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                BitConverter.GetBytes(PayloadLength).CopyTo(bytes, currentIndex);
+
+                return bytes;
+            }
+
+            public static Header FromByteArray(byte[] bytes)
+            {
+                Header result = new Header();
+
+                int currentIndex = 0;
+
+                result.MessageID = (MessageID)bytes[currentIndex];
+                currentIndex += sizeof(byte);
+
+                result.CommandCode = (CommandCode)BitConverter.ToUInt16(bytes, currentIndex);
+                currentIndex += sizeof(ushort);
+
+                result.PacketSequenceNumber = BitConverter.ToUInt64(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                result.CommandTimestamp = BitConverter.ToUInt64(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                result.ResponseTimestamp = BitConverter.ToUInt64(bytes, currentIndex);
+                currentIndex += sizeof(ulong);
+
+                result.PayloadLength = BitConverter.ToUInt16(bytes, currentIndex);
+
+                return result;
+            }
         }
 
         public struct SetTargetParams
         {
+            public Header MessageHeader { get; set; }
+
             /// <summary>
             /// Gets or sets the target X coordinate.
             /// </summary>
@@ -178,7 +229,7 @@ namespace ARTICARES
             public override string ToString()
             {
                 string additionalInfo = BitConverter.ToString(AdditionalInfo).Replace("-", "");
-                return $"TargetX: {TargetX}, " +
+                return $"{MessageHeader.ToString()} - TargetX: {TargetX}, " +
                        $"TargetY: {TargetY}, " +
                        $"KGainX: {KGainX}, " +
                        $"KGainY: {KGainY}, " +
@@ -186,6 +237,78 @@ namespace ARTICARES
                        $"BGainY: {BGainY}, " +
                        $"ForceGain: {ForceGain}, " +
                        $"AdditionalInfo: {additionalInfo}";
+            }
+
+            public static SetTargetParams FromByteArray(byte[] bytes)
+            {
+                SetTargetParams result = new SetTargetParams();
+                int currentIndex = 0;
+
+                // Decode header
+                result.MessageHeader = DecodeHeader(bytes);
+                currentIndex += (int)MessageSize.Header;
+
+                result.TargetX = BitConverter.ToInt16(bytes, currentIndex);
+                currentIndex += sizeof(short);
+
+                result.TargetY = BitConverter.ToInt16(bytes, currentIndex);
+                currentIndex += sizeof(short);
+
+                result.KGainX = BitConverter.ToSingle(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                result.KGainY = BitConverter.ToSingle(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                result.BGainX = BitConverter.ToSingle(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                result.BGainY = BitConverter.ToSingle(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                result.ForceGain = BitConverter.ToSingle(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                result.AdditionalInfo = new byte[20];
+                Array.Copy(bytes, currentIndex, result.AdditionalInfo, 0, 20);
+
+                return result;
+            }
+
+            public byte[] ToByteArray()
+            {
+                byte[] bytes = new byte[(int)MessageSize.Header + (int)MessageSize.SetTargetParams]; // Total size of all elements
+
+                int currentIndex = 0;
+
+                // Convert header
+                EncodeHeader(MessageHeader).CopyTo(bytes, currentIndex);
+                currentIndex += (int)MessageSize.Header;
+
+                BitConverter.GetBytes(TargetX).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(short);
+
+                BitConverter.GetBytes(TargetY).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(short);
+
+                BitConverter.GetBytes(KGainX).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                BitConverter.GetBytes(KGainY).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                BitConverter.GetBytes(BGainX).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                BitConverter.GetBytes(BGainY).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                BitConverter.GetBytes(ForceGain).CopyTo(bytes, currentIndex);
+                currentIndex += sizeof(float);
+
+                Array.Copy(AdditionalInfo, 0, bytes, currentIndex, 20);
+
+                return bytes;
             }
         }
 
@@ -306,57 +429,27 @@ namespace ARTICARES
 
         private static byte[] EncodeHeader(Header header)
         {
-            var message = new byte[0];
-
-            // Encode header
-            message = message.Concat(new[] { (byte)header.MessageID }).ToArray();
-            message = message.Concat(BitConverter.GetBytes((ushort)header.CommandCode)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(header.PacketSequenceNumber)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(header.CommandTimestamp)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(header.ResponseTimestamp)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(header.PayloadLength)).ToArray();
-
-            return message;
+            return header.ToByteArray();
         }
 
         public static Header DecodeHeader(byte[] message)
         {
-            var header = new Header();
-            var currentIndex = 0;
-
-            // Decode header
-            header.MessageID = (MessageID)message[currentIndex];
-            currentIndex += sizeof(byte);
-            header.CommandCode = (CommandCode)BitConverter.ToUInt16(message, currentIndex);
-            currentIndex += sizeof(ushort);
-            header.PacketSequenceNumber = BitConverter.ToUInt64(message, currentIndex);
-            currentIndex += sizeof(ulong);
-            header.CommandTimestamp = BitConverter.ToUInt64(message, currentIndex);
-            currentIndex += sizeof(ulong);
-            header.ResponseTimestamp = BitConverter.ToUInt64(message, currentIndex);
-            currentIndex += sizeof(ulong);
-            header.PayloadLength = BitConverter.ToUInt16(message, currentIndex);
-            currentIndex += sizeof(ushort);
-
-
-            return header;
+            return Header.FromByteArray(message);
         }
 
         public static byte[] EncodeSetTargetParams(short targetX, short targetY, float kX, float kY)
         {
-            var message = new byte[0];
-
-            Header header = new Header
+            SetTargetParams command = new SetTargetParams
             {
-                MessageID = MessageID.CommandMessage/* Message ID value */,
-                CommandCode = CommandCode.SetTargetParams/* Command Code value */,
-                PacketSequenceNumber = _latestPacketSequenceNumber++/* Packet Sequence Number value */,
-                CommandTimestamp = (ulong)(DateTimeOffset.UtcNow - epoch).Ticks / 10/* Command Timestamp value */,
-                ResponseTimestamp = 0/* Response Timestamp value */,
-                PayloadLength = (ushort)MessageSize.SetTargetParams//(ushort)System.Runtime.InteropServices.Marshal.SizeOf(typeof(SetTargetParams))/* Payload Length value */
-            };
-            SetTargetParams body = new SetTargetParams
-            {
+                MessageHeader = new Header
+                {
+                    MessageID = MessageID.CommandMessage/* Message ID value */,
+                    CommandCode = CommandCode.SetTargetParams/* Command Code value */,
+                    PacketSequenceNumber = _latestPacketSequenceNumber++/* Packet Sequence Number value */,
+                    CommandTimestamp = (ulong)(DateTimeOffset.UtcNow - MicroSecondDateTime.epoch).Ticks / 10/* Command Timestamp value */,
+                    ResponseTimestamp = 0/* Response Timestamp value */,
+                    PayloadLength = (ushort)MessageSize.SetTargetParams/* Payload Length value */
+                },
                 TargetX = targetX/* Target X value */,
                 TargetY = targetY/* Target Y value */,
                 KGainX = kX/* K Gain X value */,
@@ -367,49 +460,12 @@ namespace ARTICARES
                 AdditionalInfo = new byte[20]/* Additional Info value (20 bytes) */
             };
 
-            // Encode header
-            message = message.Concat(EncodeHeader(header)).ToArray();
-            // Encode body
-            message = message.Concat(BitConverter.GetBytes(body.TargetX)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.TargetY)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.KGainX)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.KGainY)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.BGainX)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.BGainY)).ToArray();
-            message = message.Concat(BitConverter.GetBytes(body.ForceGain)).ToArray();
-            message = message.Concat(body.AdditionalInfo).ToArray();
-
-            return message;
+            return command.ToByteArray();
         }
 
-        public static (Header, SetTargetParams) DecodeSetTargetParams(byte[] message)
-        {
-            var header = new Header();
-            var body = new SetTargetParams();
-            var currentIndex = 0;
-
-            // Decode header
-            header = DecodeHeader(message);
-            currentIndex += (ushort)MessageSize.Header;//System.Runtime.InteropServices.Marshal.SizeOf(typeof(Header));
-
-            // Decode body
-            body.TargetX = BitConverter.ToInt16(message, currentIndex);
-            currentIndex += sizeof(short);
-            body.TargetY = BitConverter.ToInt16(message, currentIndex);
-            currentIndex += sizeof(short);
-            body.KGainX = BitConverter.ToSingle(message, currentIndex);
-            currentIndex += sizeof(float);
-            body.KGainY = BitConverter.ToSingle(message, currentIndex);
-            currentIndex += sizeof(float);
-            body.BGainX = BitConverter.ToSingle(message, currentIndex);
-            currentIndex += sizeof(float);
-            body.BGainY = BitConverter.ToSingle(message, currentIndex);
-            currentIndex += sizeof(float);
-            body.ForceGain = BitConverter.ToSingle(message, currentIndex);
-            currentIndex += sizeof(float);
-            body.AdditionalInfo = message.Skip(currentIndex).Take(20).ToArray();
-
-            return (header, body);
+        public static SetTargetParams DecodeSetTargetParams(byte[] message)
+        {   
+            return SetTargetParams.FromByteArray(message);
         }
     }
 }
